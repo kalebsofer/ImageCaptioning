@@ -24,6 +24,9 @@ data = ["A", "A", "B", "B", "C", "C", "A", "A", "B", "B", "C", "C", "A"]
 # Define a simple vocabulary and tokenization
 vocab = {"A": 0, "B": 1, "C": 2}  # Example vocabulary
 
+# Create reverse mapping from index to token
+index_to_vocab = {index: token for token, index in vocab.items()}
+
 # Tokenize the data
 tokenized_data = [vocab[token] for token in data]
 
@@ -31,18 +34,16 @@ dummy_input = torch.tensor(tokenized_data).unsqueeze(0).to(device)
 
 dummy_target = torch.tensor(tokenized_data[1:] + [vocab["A"]]).unsqueeze(0).to(device)
 
-index_to_vocab = {v: k for k, v in vocab.items()}
-
 # %%
 # Hyperparameters
-vocab_size = 10000  # Example vocabulary size
-embed_size = 512
-num_heads = 8
-ff_dim = 2048
-num_layers = 6
-max_len = 5000
-learning_rate = 0.001
-num_epochs = 10
+vocab_size = 3  # Example vocabulary size
+embed_size = 16
+num_heads = 4
+ff_dim = 32
+num_layers = 2
+max_len = 100
+learning_rate = 0.01
+num_epochs = 20
 
 # %%
 decoder_input = DecoderInput(vocab_size, embed_size, max_len).to(device)
@@ -88,8 +89,8 @@ with tqdm(total=total_steps, desc="Training Progress") as pbar:
         target_sequence = [
             index_to_vocab[idx] for idx in dummy_target.squeeze(0).tolist()
         ]
-        print(f"Input sequence: {input_sequence}")
-        print(f"Target sequence: {target_sequence}")
+        # print(f"Input sequence: {input_sequence}")
+        # print(f"Target sequence: {target_sequence}")
 
         pbar.set_postfix(epoch=epoch + 1, loss=loss.item())
         pbar.update(len(dummy_input))
@@ -102,14 +103,14 @@ wandb.finish()
 
 # %%
 
-vocab = {"A": 0, "B": 1, "C": 2}
-index_to_vocab = {v: k for k, v in vocab.items()}
+num_predict = 2
 
-test_data = ["A", "A", "B", "B", "C", "C", "A", "A", "B", "B", "C", "C", "A"]
+# Start with an initial input sequence
+initial_sequence = ["A", "A"]
+tokenized_initial_sequence = [vocab[token] for token in initial_sequence]
+input_sequence = torch.tensor(tokenized_initial_sequence).unsqueeze(0).to(device)
 
-tokenized_test_data = [vocab[token] for token in test_data]
-
-test_input = torch.tensor(tokenized_test_data).unsqueeze(0).to(device)
+predicted_sequence = initial_sequence.copy()
 
 decoder_input.eval()
 for layer in decoder_layers:
@@ -117,16 +118,26 @@ for layer in decoder_layers:
 final_layer.eval()
 
 with torch.no_grad():
-    x = decoder_input(test_input)
-    for layer in decoder_layers:
-        x = layer(x)
-    output = final_layer(x)
+    for _ in range(num_predict):
+        x = decoder_input(input_sequence)
+        for layer in decoder_layers:
+            x = layer(x)
+        output = final_layer(x)
 
-predicted_indices = torch.argmax(output, dim=-1).squeeze(0).tolist()
+        # Get the predicted token
+        predicted_index = torch.argmax(output, dim=-1).squeeze(0)[-1].item()
+        predicted_token = index_to_vocab[predicted_index]
 
-predicted_tokens = [index_to_vocab[idx] for idx in predicted_indices]
+        # Append the predicted token to the sequence
+        predicted_sequence.append(predicted_token)
 
-print("Test input sequence:", test_data)
-print("Predicted sequence:", predicted_tokens)
+        # Update the input sequence with the new token
+        input_sequence = (
+            torch.tensor([vocab[token] for token in predicted_sequence])
+            .unsqueeze(0)
+            .to(device)
+        )
+
+print("Generated sequence:", predicted_sequence)
 
 # %%
