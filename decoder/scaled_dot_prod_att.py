@@ -22,10 +22,8 @@ def scaled_dot_product_attention(Q, K, V):
     causal_mask = torch.triu(torch.ones(seq_length, seq_length), diagonal=1).bool()
     scores = scores.masked_fill(causal_mask, -float("inf"))
 
-    # Softmax to get attention weights
     attention_weights = F.softmax(scores, dim=-1)
 
-    # Multiply by V
     output = torch.matmul(attention_weights, V)
 
     return output, attention_weights

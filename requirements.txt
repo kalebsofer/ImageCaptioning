@@ -3,3 +3,8 @@ torch
 pandas
 tqdm
 wandb
+PIL
+torchvision
+nltk
+string
+
