@@ -19,6 +19,10 @@ image_path = "data/flickr30k-images"
 sp = spm.SentencePieceProcessor()
 sp.load("spm.model")
 
+# Define special tokens
+START_TOKEN = sp.piece_to_id("<s>")
+END_TOKEN = sp.piece_to_id("</s>")
+
 
 # %%
 def read_image(path, img_size=224):
@@ -97,18 +101,45 @@ class ImageCaptionDataset(Dataset):
         image = Image.open(image_path).convert("RGB")
         if self.transform:
             image = self.transform(image)
+
         captions = ast.literal_eval(row["raw"])
         processed_captions = [sp.encode(caption, out_type=int) for caption in captions]
-        return {"image": image, "captions": processed_captions}
+
+        # Generate (caption-input, caption-label) pairs
+        caption_pairs = []
+        for caption in processed_captions:
+            caption_input = [START_TOKEN] + caption
+            caption_label = caption + [END_TOKEN]
+            caption_pairs.append((caption_input, caption_label))
+
+        return {"image": image, "caption_pairs": caption_pairs}
 
 
 # %%
 def custom_collate_fn(batch):
     images = [item["image"] for item in batch]
-    captions = [torch.tensor(item["captions"][0]) for item in batch]
     images = torch.stack(images, dim=0)
-    padded_captions = pad_sequence(captions, batch_first=True, padding_value=0)
-    return {"image": images, "captions": padded_captions}
+
+    caption_inputs = []
+    caption_labels = []
+
+    for item in batch:
+        for caption_input, caption_label in item["caption_pairs"]:
+            caption_inputs.append(torch.tensor(caption_input))
+            caption_labels.append(torch.tensor(caption_label))
+
+    padded_caption_inputs = pad_sequence(
+        caption_inputs, batch_first=True, padding_value=0
+    )
+    padded_caption_labels = pad_sequence(
+        caption_labels, batch_first=True, padding_value=0
+    )
+
+    return {
+        "image": images,
+        "caption_inputs": padded_caption_inputs,
+        "caption_labels": padded_caption_labels,
+    }
 
 
 # %%
@@ -116,23 +147,33 @@ dataset = ImageCaptionDataset(data, image_path)
 
 import pickle
 
-with open("data/dataset.pkl", "wb") as f:
+with open("data/processed_dataset.pkl", "wb") as f:
     pickle.dump(dataset, f)
 
 # %%
 
-# return the shape of the dataset
-print(len(dataset[0]["captions"]))
-print(torch.tensor(dataset[0]["captions"][0]).shape)
+# number of captions per image
+print(len(dataset[0]["caption_pairs"]))  # 5
+
+# shape of first caption:
+print(torch.tensor(dataset[0]["caption_pairs"][0][0]).shape)  # torch.Size([18])
+
+# shape of first image:
+print(dataset[0]["image"].shape)  # torch.Size([3, 256, 256])
+
+
+# %%
 # Example usage
+
 dataloader = DataLoader(
     dataset, batch_size=16, shuffle=True, collate_fn=custom_collate_fn
 )
 
 # for batch in dataloader:
 #     images = batch["image"]
-#     captions = batch["captions"]
-#     print(images.shape, captions.shape)
+#     caption_inputs = batch["caption_inputs"]
+#     caption_labels = batch["caption_labels"]
+#     print(images.shape, caption_inputs.shape, caption_labels.shape)
 #     break  # Break after one batch for demonstration
 
 # %%
