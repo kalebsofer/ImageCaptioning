@@ -1,3 +1,4 @@
+# %%
 import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -5,6 +6,8 @@ from torchvision import transforms
 from PIL import Image
 import os
 import json
+
+# %%
 
 
 class FlattenedFlickr30kDataset(Dataset):
@@ -52,17 +55,25 @@ class FlattenedFlickr30kDataset(Dataset):
 
         return {"image": image, "caption": caption, "image_id": image_id}
 
-
+# %%
 image_dir = "data/flickr30k_images/"
 metadata_file = "data/flickr_annotations_30k.csv"
 
 dataset = FlattenedFlickr30kDataset(image_dir, metadata_file)
 dataloader = DataLoader(dataset, batch_size=16, shuffle=True)
 
+# %%
+# test if all images have corresponding metadata
+for data in dataset:
+    if not os.path.exists(data["image_path"]):
+        print(f"Image does not exist: {data['image_path']}")
 
+# %%
 for batch in dataloader:
     images = batch["image"]
     captions = batch["caption"]
     image_ids = batch["image_id"]
     print(images.shape, captions, image_ids)
     break  # Break after one batch for demonstration
+
+# %%

@@ -96,6 +96,10 @@ class ImageCaptionDataset(Dataset):
         return len(self.dataframe)
 
     def __getitem__(self, idx):
+        # Ensure idx is an integer
+        if isinstance(idx, (list, slice)):
+            raise TypeError("Index must be an integer, not a list or slice.")
+
         row = self.dataframe.iloc[idx]
         image_path = os.path.join(self.image_dir, row["filename"])
         image = Image.open(image_path).convert("RGB")
@@ -145,6 +149,13 @@ def custom_collate_fn(batch):
 # %%
 dataset = ImageCaptionDataset(data, image_path)
 
+# %%
+train_dataset, test_dataset, val_dataset = torch.utils.data.random_split(
+    dataset, [0.8, 0.1, 0.1]
+)
+
+
+# %%
 import pickle
 
 with open("data/processed_dataset.pkl", "wb") as f:

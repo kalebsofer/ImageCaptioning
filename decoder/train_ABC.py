@@ -35,8 +35,7 @@ dummy_input = torch.tensor(tokenized_data).unsqueeze(0).to(device)
 dummy_target = torch.tensor(tokenized_data[1:] + [vocab["A"]]).unsqueeze(0).to(device)
 
 # %%
-# Hyperparameters
-vocab_size = 3  # Example vocabulary size
+vocab_size = 3
 embed_size = 16
 num_heads = 4
 ff_dim = 32
@@ -103,10 +102,10 @@ wandb.finish()
 
 # %%
 
-num_predict = 2
+num_predict = 8
 
 # Start with an initial input sequence
-initial_sequence = ["A", "A"]
+initial_sequence = ["A", "A", "B", "B", "C", "C", "A"]
 tokenized_initial_sequence = [vocab[token] for token in initial_sequence]
 input_sequence = torch.tensor(tokenized_initial_sequence).unsqueeze(0).to(device)
 

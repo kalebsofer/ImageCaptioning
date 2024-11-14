@@ -1,7 +1,7 @@
 import torch.nn as nn
 
-from decoder.multi_head_att import MultiHeadAttention
-from decoder.feed_forward import FeedForward
+from transformer.multi_head_att import MultiHeadAttention
+from transformer.feed_forward import FeedForward
 
 """
 Decoder Layer/Block

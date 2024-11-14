@@ -35,3 +35,7 @@ Steps:
 - Run `image_preproc.py` to preprocess the data
 - Save dataset to `data/dataset.pkl`
 - Load dataset using `DataLoader` where needed
+
+dataset should be (image, caption-input, caption-label) triples, where: 
+- caption-input is the tokenized caption with <s> prepended.
+- caption-label is the tokenized caption with </s> appended.
