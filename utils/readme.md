@@ -23,10 +23,15 @@
 
 ### Usage:
 
-- run the `get_norm_metrics.py` script to get the mean and std of the image dataset.
-- add the mean and std to the `image_preproc.py` script.
-- run the `image_preproc.py` script to preprocess the image dataset.
+Prerequisites:
+- Have image & caption data saved to `data/` (add to .gitignore)
+- Install sentencepiece
+- Run `create_captions.py` to create `captions.txt` and train SentencePiece model (will save to `spm.model`)
 
-```python
 
-```
+Steps:
+- Run `get_norm_metrics.py` to get the mean and std of the image dataset.
+- Add the mean and std to the `image_preproc.py` script.
+- Run `image_preproc.py` to preprocess the data
+- Save dataset to `data/dataset.pkl`
+- Load dataset using `DataLoader` where needed
