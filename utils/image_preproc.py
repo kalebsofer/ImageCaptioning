@@ -120,15 +120,19 @@ with open("data/dataset.pkl", "wb") as f:
     pickle.dump(dataset, f)
 
 # %%
+
+# return the shape of the dataset
+print(len(dataset[0]["captions"]))
+print(torch.tensor(dataset[0]["captions"][0]).shape)
 # Example usage
 dataloader = DataLoader(
     dataset, batch_size=16, shuffle=True, collate_fn=custom_collate_fn
 )
 
-for batch in dataloader:
-    images = batch["image"]
-    captions = batch["captions"]
-    print(images.shape, captions.shape)
-    break  # Break after one batch for demonstration
+# for batch in dataloader:
+#     images = batch["image"]
+#     captions = batch["captions"]
+#     print(images.shape, captions.shape)
+#     break  # Break after one batch for demonstration
 
 # %%
