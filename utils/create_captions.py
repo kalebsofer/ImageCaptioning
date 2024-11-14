@@ -13,3 +13,9 @@ for raw_captions in data["raw"]:
 with open("captions.txt", "w", encoding="utf-8") as f:
     for caption in captions:
         f.write(caption + "\n")
+
+import sentencepiece as spm
+
+spm.SentencePieceTrainer.train(
+    input="captions.txt", model_prefix="spm", vocab_size=16000
+)
