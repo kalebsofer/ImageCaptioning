@@ -7,4 +7,6 @@ PIL
 torchvision
 nltk
 string
+sentencepiece
+matplotlib
 
