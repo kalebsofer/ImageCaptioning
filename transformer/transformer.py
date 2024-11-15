@@ -197,13 +197,14 @@ class Decoder(nn.Module):
 
 
 class TransformerB(nn.Module):
+
     def __init__(
         self,
         vocab_size,
         d=512,
         num_heads=8,
-        num_encoder_layers=16,
-        num_decoder_layers=16,
+        num_encoder_layers=4,
+        num_decoder_layers=8,
     ):
         super().__init__()
         self.encoder = Encoder(d, num_heads, num_encoder_layers)

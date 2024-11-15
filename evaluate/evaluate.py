@@ -1,41 +1,100 @@
 import torch
 from torch.utils.data import DataLoader
-from transformer.besformer import TransformerB
+from transformer.transformer import TransformerB
 from utils.image_preproc import custom_collate_fn
 import matplotlib.pyplot as plt
 import numpy as np
 import sentencepiece as spm
 
+# get current py path
+import os
+
+current_path = os.path.dirname(os.path.abspath(__file__))
 
 vocab_size = 16000
 model = TransformerB(vocab_size=vocab_size)
 model.load_state_dict(torch.load("weights/m_28_19_14.pth"))
 model.eval()
 
-# import test dataset
+sp = spm.SentencePieceProcessor()
+sp.load("spm.model")
+
+
+def decode_caption(caption_ids, sp):
+    return sp.decode_ids(caption_ids)
+
+
+def generate_caption_for_triplet(test_triplet):
+    image = test_triplet["image"].unsqueeze(0)  # Add batch dimension
+    caption_input = test_triplet["caption_pairs"][0][0]  # Use the first input caption
+    caption_input = torch.tensor(caption_input).unsqueeze(0)  # Add batch dimension
+
+    with torch.no_grad():
+        # Forward pass
+        output = model(image, caption_input)
+        predicted_ids = output.argmax(dim=-1).squeeze().tolist()
+
+    # Decode the predicted caption
+    generated_caption = decode_caption(predicted_ids, sp)
+    return generated_caption
+
+
 test_dataset = torch.load("data/test_dataset.pth")
 
+test_triplet = test_dataset[0]
+generated_caption = generate_caption_for_triplet(test_triplet)
+print("Generated Caption:", generated_caption)
+
+
+# get shape of input data
+example = test_dataset[0]
+sample = test_dataset[0]
+image = sample["image"]
+type(test_dataset)
+# Check the type and shape of the image
+print(type(image))
+print(image.shape)
+
+
+caption_pairs = sample["caption_pairs"]
+
+# Check the type and length of the caption_pairs
+print(type(caption_pairs))
+len(caption_pairs)
+caption_pairs[0]
+if isinstance(caption_pairs, list):
+    print(f"Number of caption pairs: {len(caption_pairs)}")
+    # Optionally, check the first caption
+    print(caption_pairs[0])
+
+
+# Inspect the image tensor
+image_tensor = example["image"]
+print("Image Tensor Shape:", image_tensor.shape)
+
+# Inspect the caption pairs
+caption_pairs = example["caption_pairs"]
+print("Number of Caption Pairs:", len(caption_pairs))
+
+# Print each caption pair
+for idx, (input_caption, target_caption) in enumerate(caption_pairs):
+    print(f"Caption Pair {idx + 1}:")
+    print("  Input Caption Tokens:", input_caption)
+    print("  Target Caption Tokens:", target_caption)
+    print("  Input Caption Length:", len(input_caption))
+    print("  Target Caption Length:", len(target_caption))
 # Prepare the test DataLoader
 test_dataloader = DataLoader(
     test_dataset, batch_size=16, shuffle=False, collate_fn=custom_collate_fn
 )
 
 crt = torch.nn.CrossEntropyLoss()
-sp = spm.SentencePieceProcessor()
-sp.load("spm.model")
-
-
-# Function to decode captions from token IDs to text
-def decode_caption(caption_ids, sp):
-    return sp.decode_ids(caption_ids.tolist())
-
 
 # Global variables
 total_loss = 0
 total_samples = 0
 examples_to_inspect = 10
 inspected_examples = 0
-
 
 def evaluate():
     global total_loss, total_samples, inspected_examples
