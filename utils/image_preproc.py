@@ -82,9 +82,12 @@ class ImageCaptionDataset(Dataset):
             else transforms.Compose(
                 [
                     transforms.Resize((256, 256)),
+                    transforms.RandomHorizontalFlip(),  # Added data augmentation
+                    transforms.ColorJitter(
+                        brightness=0.2, contrast=0.2, saturation=0.2
+                    ),  # Added data augmentation
                     transforms.ToTensor(),
                     transforms.Normalize(
-                        # from get_norm_metrics.py
                         mean=[0.44408225, 0.42113259, 0.38472826],
                         std=[0.25182596, 0.2414833, 0.24269642],
                     ),
@@ -96,7 +99,6 @@ class ImageCaptionDataset(Dataset):
         return len(self.dataframe)
 
     def __getitem__(self, idx):
-        # Ensure idx is an integer
         if isinstance(idx, (list, slice)):
             raise TypeError("Index must be an integer, not a list or slice.")
 
@@ -109,7 +111,6 @@ class ImageCaptionDataset(Dataset):
         captions = ast.literal_eval(row["raw"])
         processed_captions = [sp.encode(caption, out_type=int) for caption in captions]
 
-        # Generate (caption-input, caption-label) pairs
         caption_pairs = []
         for caption in processed_captions:
             caption_input = [START_TOKEN] + caption
@@ -139,10 +140,15 @@ def custom_collate_fn(batch):
         caption_labels, batch_first=True, padding_value=0
     )
 
+    attention_mask = (
+        padded_caption_inputs != 0
+    ).float()  # Added attention mask for padding
+
     return {
         "image": images,
         "caption_inputs": padded_caption_inputs,
         "caption_labels": padded_caption_labels,
+        "attention_mask": attention_mask,
     }
 
 
