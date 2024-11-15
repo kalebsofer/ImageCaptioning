@@ -1,185 +1,223 @@
 import torch
+import torchvision
+import torchvision.transforms as transforms
 import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, Dataset
+import os
+from PIL import Image
+import random
+import sentencepiece as spm
+import math
+import pandas as pd
 
 
-# TransformerInput class
-class TransformerInput(nn.Module):
-    """
-    Transformer Input Layer
-
-    Token Embeddings: Convert each token in the sequence into a dense vector representation.
-    Rotary Positional Encoding: Add rotary positional encodings to give the model information about the position of each token in the sequence.
-    """
-
-    def __init__(self, vocab_size, embed_size, max_len=5000):
-        super(TransformerInput, self).__init__()
-        self.token_embedding = nn.Embedding(vocab_size, embed_size)
-        self.embed_size = embed_size
-
-    def positional_encoding(self, x):
-        """
-        Apply rotary positional encoding to the input tensor.
-        """
-        seq_len = x.size(1)
-        half_dim = self.embed_size // 2
-
-        theta = torch.arange(half_dim, dtype=torch.float32) / half_dim
-        theta = 1.0 / (10000**theta)
-        theta = theta.unsqueeze(0).unsqueeze(0)
-
-        # Get position IDs
-        position_ids = torch.arange(seq_len, dtype=torch.float32).unsqueeze(-1)
-        position_ids = position_ids.unsqueeze(0)
-
-        # Compute sin and cos for each position
-        sin = torch.sin(position_ids * theta)
-        cos = torch.cos(position_ids * theta)
-
-        # Apply rotary transformation to the input
-        x1, x2 = x[..., :half_dim], x[..., half_dim:]
-        x = torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
-
-        return x
-
-    def forward(self, x):
-        x = self.token_embedding(x)
-        x = self.positional_encoding(x)
-
-        # Rearrange dimensions to match the expected input for TransformerEncoderLayer
-        # From (batch_size, seq_len, embed_size) to (seq_len, batch_size, embed_size)
-        x = x.permute(1, 0, 2)
-
-        return x
-
-
-# MultiHeadAttention class
-class MultiHeadAttention(nn.Module):
-    def __init__(self, embed_size, num_heads, kqv_dim=None):
-        """
-        Multi-head attention module.
-
-        Args:
-            embed_size (int): The embedding size for queries.
-            num_heads (int): The number of attention heads.
-            kv_embed_size (int, optional): The embedding size for keys and values. Defaults to embed_size.
-        """
-        super(MultiHeadAttention, self).__init__()
-        assert embed_size % num_heads == 0, "Embed size must be divisible by num_heads"
-
+class Attention(nn.Module):
+    def __init__(self, d, num_heads, is_causal=False):
+        super().__init__()
+        self.is_causal = is_causal
         self.num_heads = num_heads
-        self.head_dim = embed_size // num_heads
+        self.d_per_head = d // num_heads
+        self.scaling = self.d_per_head**-0.5
 
-        # If kqv_dim is not provided, assume it's the same as embed_size
-        self.kqv_dim = kqv_dim if kqv_dim is not None else embed_size
+        self.W_Q = nn.Linear(d, d)
+        self.W_K = nn.Linear(d, d)
+        self.W_V = nn.Linear(d, d)
+        self.fc = nn.Linear(d, d)
 
-        self.query_linear = nn.Linear(embed_size, embed_size)
-        self.key_linear = nn.Linear(self.kqv_dim, embed_size)
-        self.value_linear = nn.Linear(self.kqv_dim, embed_size)
+        self.softmax = nn.Softmax(dim=-1)
 
-        # Output linear layer
-        self.fc_out = nn.Linear(embed_size, embed_size)
+    def forward(self, q, k, v, mask=None):
+        batch_size, seq_length, d = q.size()
+        # Ensure the input size matches the expected size
+        assert d == self.num_heads * self.d_per_head, "Input dimension mismatch"
 
-    def forward(self, Q, K, V, mask=None):
-        batch_size = Q.size(0)
-
-        # Linear projections
-        Q = self.query_linear(Q)
-        K = self.key_linear(K)
-        V = self.value_linear(V)
-
-        # Split into multiple heads for parallel attention
-        Q = Q.view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
-        K = K.view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
-        V = V.view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
-
-        # Scaled dot-product attention for each head
-        attention, attention_weights = scaled_dot_product_attention(Q, K, V, mask)
-
-        # Concatenate heads and put through the final linear layer
-        attention = (
-            attention.transpose(1, 2)
+        Q = (
+            self.W_Q(q)
+            .reshape(batch_size, seq_length, self.num_heads, self.d_per_head)
+            .transpose(1, 2)
             .contiguous()
-            .view(batch_size, -1, self.num_heads * self.head_dim)
         )
-        output = self.fc_out(attention)
+        K = (
+            self.W_K(k)
+            .reshape(batch_size, -1, self.num_heads, self.d_per_head)
+            .transpose(1, 2)
+            .contiguous()
+        )
+        V = (
+            self.W_V(v)
+            .reshape(batch_size, -1, self.num_heads, self.d_per_head)
+            .transpose(1, 2)
+            .contiguous()
+        )
 
-        return output, attention_weights
+        # Scaled dot-product attention
+        scores = torch.matmul(Q, K.transpose(-2, -1)) * self.scaling
+        if mask is not None:
+            scores = scores.masked_fill(mask == 0, float("-inf"))
+
+        attn_weights = self.softmax(scores)
+        output = torch.matmul(attn_weights, V)
+        output = output.transpose(1, 2).contiguous().view(batch_size, seq_length, d)
+
+        return self.fc(output)
 
 
-# FeedForward class
 class FeedForward(nn.Module):
-    """
-    Feed Forward Layer
-
-    Linear Transformation: Input is projected into a higher-dimensional space.
-    ReLU Activation: Adds non-linearity.
-    Second Linear Transformation: Projects back to the original dimension, preparing the output for further processing.
-
-    Note: feed forward dimension ff_dim often set to 4*input embedding dimension
-    """
-
-    def __init__(self, embed_size, ff_dim):
-        super(FeedForward, self).__init__()
-        self.fc1 = nn.Linear(embed_size, ff_dim)
-        self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(ff_dim, embed_size)
+    def __init__(self, d):
+        super().__init__()
+        self.linear1 = nn.Linear(d, d * 4)
+        self.gelu = nn.GELU()
+        self.linear2 = nn.Linear(d * 4, d)
+        self.dropout = nn.Dropout(0.1)
 
     def forward(self, x):
-        x = self.fc1(x)
-        x = self.relu(x)
-        x = self.fc2(x)
+        return self.linear2(self.dropout(self.gelu(self.linear1(x))))
+
+
+class EncoderBlock(nn.Module):
+    def __init__(self, d, num_heads):
+        super().__init__()
+        self.attention = Attention(d, num_heads)
+        self.norm1 = nn.LayerNorm(d)
+        self.ffn = FeedForward(d)
+        self.norm2 = nn.LayerNorm(d)
+        self.dropout = nn.Dropout(0.1)
+
+    def forward(self, x, mask=None):
+        attn_output = self.attention(x, x, x, mask)
+        x = self.norm1(x + attn_output)
+        ffn_output = self.ffn(x)
+        x = self.norm2(x + ffn_output)
         return x
 
 
-# NormSum class
-class NormSum(nn.Module):
-    def __init__(self, embed_size, dropout=0.1):
-        super(NormSum, self).__init__()
-        self.layer_norm = nn.LayerNorm(embed_size)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x, sublayer_output):
-        return self.layer_norm(x + self.dropout(sublayer_output))
-
-
-# CustomLayer class
-class CustomLayer(nn.Module):
-    def __init__(self, embed_size, num_heads, ff_hidden_size):
-        super(CustomLayer, self).__init__()
-        self.multi_head_attention = MultiHeadAttention(embed_size, num_heads)
-        self.feed_forward = FeedForward(embed_size, ff_hidden_size)
-        self.norm_sum1 = NormSum(embed_size)
-        self.norm_sum2 = NormSum(embed_size)
-
-    def forward(self, x, src_key_padding_mask=None):
-        # Multi-head attention
-        attn_output, _ = self.multi_head_attention(x, x, x, mask=src_key_padding_mask)
-        x = self.norm_sum1(x, attn_output)
-
-        # Feedforward network
-        ff_output = self.feed_forward(x)
-        x = self.norm_sum2(x, ff_output)
-
-        return x
-
-
-# Main ImageCaptioningTransformer class
-class ImageCaptioningTransformer(nn.Module):
-    def __init__(self, vocab_size, embed_size, num_layers, num_heads, ff_hidden_size):
-        super(ImageCaptioningTransformer, self).__init__()
-        self.input_layer = TransformerInput(vocab_size, embed_size)
-        self.encoder_layers = nn.ModuleList(
-            [
-                CustomLayer(embed_size, num_heads, ff_hidden_size)
-                for _ in range(num_layers)
-            ]
+class Encoder(nn.Module):
+    def __init__(self, d, num_heads, num_layers):
+        super().__init__()
+        self.cnn = torchvision.models.resnet50(pretrained=True)
+        self.cnn = nn.Sequential(
+            *(list(self.cnn.children())[:-2])
+        )  # Keep spatial dimensions
+        self.linear = nn.Linear(2048, d)
+        self.layers = nn.ModuleList(
+            [EncoderBlock(d, num_heads) for _ in range(num_layers)]
         )
-        self.output_layer = nn.Linear(embed_size, vocab_size)
+        self.dropout = nn.Dropout(0.1)
 
-    def forward(self, x, src_key_padding_mask=None):
-        x = self.input_layer(x)
-        for layer in self.encoder_layers:
-            x = layer(x, src_key_padding_mask)
-        x = x.permute(1, 0, 2)  # Rearrange back to (batch_size, seq_len, embed_size)
-        x = self.output_layer(x)
+    def forward(self, x):
+        batch_size = x.size(0)
+        cnn_features = self.cnn(x)  # Shape: [batch_size, 2048, 7, 7]
+
+        # Adjust the reshaping to match the actual spatial dimensions
+        cnn_features = cnn_features.view(batch_size, 2048, -1).transpose(
+            1, 2
+        )  # Shape: [batch_size, 49, 2048] if 7x7, or [batch_size, 64, 2048] if 8x8
+
+        x = self.linear(cnn_features)  # Shape: [batch_size, seq_length, d]
+        seq_length = x.size(1)
+
+        # Generate positional encoding for the actual sequence length
+        pos_encoding = self.rotary_positional_encoding(seq_length, x.size(2))
+        x = x + pos_encoding
+
+        for layer in self.layers:
+            x = layer(x)
+
         return x
+
+    @staticmethod
+    def rotary_positional_encoding(seq_length, d_model):
+        position = torch.arange(0, seq_length).unsqueeze(1)
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2) * -(math.log(10000.0) / d_model)
+        )
+        pe = torch.zeros(seq_length, d_model)
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        return pe
+
+
+class DecoderBlock(nn.Module):
+    def __init__(self, d, num_heads):
+        super().__init__()
+        self.self_attn = Attention(d, num_heads, is_causal=True)
+        self.cross_attn = Attention(d, num_heads)
+        self.norm1 = nn.LayerNorm(d)
+        self.norm2 = nn.LayerNorm(d)
+        self.ffn = FeedForward(d)
+        self.norm3 = nn.LayerNorm(d)
+
+    def forward(self, x, encoder_output, mask=None):
+        x = self.norm1(x + self.self_attn(x, x, x, mask))
+        batch_size = x.size(0)
+        encoder_batch_size = encoder_output.size(0)
+        if batch_size != encoder_batch_size:
+            encoder_output = encoder_output.repeat(
+                batch_size // encoder_batch_size, 1, 1
+            )
+        cross_attn_output = self.cross_attn(x, encoder_output, encoder_output, mask)
+        x = self.norm2(x + cross_attn_output)
+        x = self.norm3(x + self.ffn(x))
+        return x
+
+
+class Decoder(nn.Module):
+    def __init__(self, vocab_size, d, num_heads, num_layers):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, d)
+        self.pos_encoding = nn.Parameter(
+            self.rotary_positional_encoding(100, d), requires_grad=False
+        )
+        self.layers = nn.ModuleList(
+            [DecoderBlock(d, num_heads) for _ in range(num_layers)]
+        )
+        self.fc = nn.Linear(d, vocab_size)
+        self.dropout = nn.Dropout(0.1)
+
+    def forward(self, x, encoder_output, mask=None):
+        x = self.embedding(x) + self.pos_encoding[: x.size(1), :]
+        x = self.dropout(x)
+
+        for layer in self.layers:
+            x = layer(x, encoder_output, mask)
+
+        return self.fc(x)
+
+    @staticmethod
+    def rotary_positional_encoding(seq_length, d_model):
+        position = torch.arange(0, seq_length).unsqueeze(1)
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2) * -(math.log(10000.0) / d_model)
+        )
+        pe = torch.zeros(seq_length, d_model)
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        return pe
+
+
+class TransformerB(nn.Module):
+    def __init__(
+        self,
+        vocab_size,
+        d=512,
+        num_heads=8,
+        num_encoder_layers=16,
+        num_decoder_layers=16,
+    ):
+        super().__init__()
+        self.encoder = Encoder(d, num_heads, num_encoder_layers)
+        self.decoder = Decoder(vocab_size, d, num_heads, num_decoder_layers)
+
+    def forward(self, image, caption, mask=None):
+        encoder_output = self.encoder(image)
+        decoder_output = self.decoder(caption, encoder_output, mask)
+        return decoder_output
+
+
+if __name__ == "__main__":
+    vocab_size = 16000
+    model = TransformerB(vocab_size=vocab_size)
+    params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print("Total Parameters: ", params)
+    print(model)
